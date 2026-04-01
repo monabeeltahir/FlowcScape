@@ -4,6 +4,7 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QGridLayout, QSizePolicy, QWidget
 
+from app.models import GateType
 from app.theme import PLOT_CELL_HEIGHT, PLOT_CELL_WIDTH
 from app.widgets.plot_cell import PlotCell
 
@@ -13,6 +14,11 @@ class PlotGridWidget(QWidget):
     insert_requested = Signal(int, object)
     export_requested = Signal(int)
     clear_requested = Signal(int)
+    gate_created = Signal(int, object, object)
+    gate_selected = Signal(int, object)
+    gate_edit_requested = Signal(int, str)
+    gate_geometry_changed = Signal(int, str, object)
+    statistics_requested = Signal(int, object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -42,6 +48,18 @@ class PlotGridWidget(QWidget):
         if cell_id in self.cells:
             self.cells[cell_id].set_figure(figure)
 
+    def set_cell_gate_entries(self, cell_id: int, gate_entries: list[tuple[str, str]]) -> None:
+        if cell_id in self.cells:
+            self.cells[cell_id].set_gate_entries(gate_entries)
+
+    def set_cell_gates(self, cell_id: int, gates) -> None:
+        if cell_id in self.cells:
+            self.cells[cell_id].set_gates(gates)
+
+    def set_selected_gate(self, cell_id: int | None, gate_id: str | None) -> None:
+        for current_cell_id, cell in self.cells.items():
+            cell.set_selected_gate_id(gate_id if current_cell_id == cell_id else None)
+
     def active_cell_ids(self) -> list[int]:
         return sorted(self.cells.keys())
 
@@ -61,6 +79,11 @@ class PlotGridWidget(QWidget):
             cell.insert_requested.connect(self.insert_requested.emit)
             cell.export_requested.connect(self.export_requested.emit)
             cell.clear_requested.connect(self.clear_requested.emit)
+            cell.gate_created.connect(self.gate_created.emit)
+            cell.gate_selected.connect(self.gate_selected.emit)
+            cell.gate_edit_requested.connect(self.gate_edit_requested.emit)
+            cell.gate_geometry_changed.connect(self.gate_geometry_changed.emit)
+            cell.statistics_requested.connect(self.statistics_requested.emit)
             self.cells[cell_id] = cell
             self._layout.addWidget(cell, cell_id // self.columns, cell_id % self.columns)
 
@@ -70,3 +93,13 @@ class PlotGridWidget(QWidget):
         self.resize(total_width, total_height)
         self.adjustSize()
         self.updateGeometry()
+
+    def begin_gate_interaction(self, cell_id: int, gate_type: GateType) -> bool:
+        cell = self.cells.get(cell_id)
+        if cell is None:
+            return False
+        return cell.begin_gate_interaction(gate_type)
+
+    def cancel_gate_interactions(self) -> None:
+        for cell in self.cells.values():
+            cell.cancel_gate_interaction()

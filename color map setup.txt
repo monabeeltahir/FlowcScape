@@ -1,0 +1,119 @@
+FlowScape Color Map Setup
+
+This file explains where to change:
+- live gate drawing colors
+- final gate colors
+- density plot color maps
+- default density color map
+
+1. Live gate drawing colors
+
+File:
+app/widgets/plot_cell.py
+
+Variables:
+- LIVE_GATE_EDGE_COLOR
+- LIVE_GATE_FILL_COLOR
+- LIVE_GATE_LINE_COLOR
+
+These control the temporary color shown while you are actively drawing a gate with the mouse.
+
+2. Final gate colors
+
+File:
+app/models.py
+
+Field:
+- GateDefinition.color
+
+This stores the final color of each gate after it has been created.
+
+Renderer fallback:
+
+File:
+app/plotting/renderer.py
+
+Function:
+- _resolve_gate_color(value)
+
+This function validates the gate color and falls back to a default if the color is invalid.
+
+3. Density plot color map choices shown in the UI
+
+File:
+app/widgets/plot_config_panel.py
+
+Widget setup:
+- self.density_cmap_combo.addItems([...])
+
+If you want a new color map to appear in the dropdown, add its display name to that list.
+
+4. Actual density color map definitions
+
+File:
+app/plotting/renderer.py
+
+Function:
+- _resolve_density_cmap(value)
+
+This function maps dropdown names to actual matplotlib color maps.
+
+Current custom maps include:
+- Flow Cytometry
+- Attune Warm
+- Blue-Yellow-Red
+
+5. How to add a new custom density map
+
+Step 1:
+Add the new display name to the dropdown list in:
+app/widgets/plot_config_panel.py
+
+Example:
+"Green Fire",
+
+Step 2:
+Add the matching custom colormap in:
+app/plotting/renderer.py
+
+Example:
+"Green Fire": LinearSegmentedColormap.from_list(
+    "green_fire",
+    ["#0b2e13", "#1f7a1f", "#7fd34e", "#ffe85a", "#ff7b22"],
+),
+
+6. How to use a built-in matplotlib colormap
+
+You only need to add the name to the dropdown in:
+app/widgets/plot_config_panel.py
+
+Example:
+"cubehelix",
+
+The renderer already falls back to the raw string if it is not one of the custom maps.
+
+7. How to change the default density map
+
+File:
+app/models.py
+
+Field in PlotConfig:
+- density_color_map: str = "turbo"
+
+You can change it to another option, for example:
+- density_color_map: str = "Flow Cytometry"
+
+8. Quick summary
+
+Gate drawing preview colors:
+- app/widgets/plot_cell.py
+
+Final gate colors:
+- app/models.py
+- app/plotting/renderer.py
+
+Density map dropdown:
+- app/widgets/plot_config_panel.py
+
+Density map definitions:
+- app/plotting/renderer.py

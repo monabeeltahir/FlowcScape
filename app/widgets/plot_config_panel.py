@@ -1,21 +1,23 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSignalBlocker, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from app.models import AxisScale, PlotConfig, PlotType, SampleData
+from app.models import AxisScale, GateLabelMode, PlotConfig, PlotType, SampleData
 from app.theme import (
     AXES_BOX_MIN_HEIGHT,
     RANGES_BOX_MIN_HEIGHT,
@@ -39,15 +41,31 @@ class PlotConfigPanel(QWidget):
 
         info_group = QGroupBox("Selected Plot")
         info_group.setMinimumHeight(SELECTED_PLOT_BOX_MIN_HEIGHT)
-        info_layout = QFormLayout(info_group)
+        info_layout = QGridLayout(info_group)
+        info_layout.setContentsMargins(10, 12, 10, 10)
+        info_layout.setHorizontalSpacing(10)
+        info_layout.setVerticalSpacing(6)
+        info_layout.setColumnStretch(1, 1)
         self.plot_label = QLabel("No plot selected")
         self.sample_label = QLabel("No sample")
-        info_layout.addRow("Plot:", self.plot_label)
-        info_layout.addRow("Sample:", self.sample_label)
+        self.source_combo = QComboBox()
+        self.source_combo.setMinimumContentsLength(18)
+        self.source_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.source_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.source_combo.setMinimumWidth(220)
+        self.source_combo.setMinimumHeight(28)
+        info_layout.addWidget(QLabel("Plot:"), 0, 0)
+        info_layout.addWidget(self.plot_label, 0, 1)
+        info_layout.addWidget(QLabel("Sample:"), 1, 0)
+        info_layout.addWidget(self.sample_label, 1, 1)
+        info_layout.addWidget(QLabel("Source:"), 2, 0)
+        info_layout.addWidget(self.source_combo, 2, 1)
+        info_layout.setRowMinimumHeight(2, 30)
 
         axis_group = QGroupBox("Axes")
         axis_group.setMinimumHeight(AXES_BOX_MIN_HEIGHT)
         axis_layout = QFormLayout(axis_group)
+        axis_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self.plot_type_combo = QComboBox()
         self.plot_type_combo.addItems([plot_type.value for plot_type in PlotType])
@@ -68,6 +86,7 @@ class PlotConfigPanel(QWidget):
         range_group = QGroupBox("Ranges")
         range_group.setMinimumHeight(RANGES_BOX_MIN_HEIGHT)
         range_layout = QFormLayout(range_group)
+        range_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.x_auto_checkbox = QCheckBox("Automatic X range")
         self.y_auto_checkbox = QCheckBox("Automatic Y range")
         self.x_min_edit = QLineEdit()
@@ -84,6 +103,7 @@ class PlotConfigPanel(QWidget):
         style_group = QGroupBox("Style")
         style_group.setMinimumHeight(STYLE_BOX_MIN_HEIGHT)
         style_layout = QFormLayout(style_group)
+        style_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.title_edit = QLineEdit()
         self.bins_spin = QSpinBox()
         self.bins_spin.setRange(10, 1000)
@@ -100,8 +120,22 @@ class PlotConfigPanel(QWidget):
         self.density_min_count_spin.setRange(1, 100)
         self.density_cmap_combo = QComboBox()
         self.density_cmap_combo.addItems(
-            ["turbo", "viridis", "plasma", "inferno", "magma", "cividis", "jet"]
+            [
+                "Flow Cytometry",
+                "Attune Warm",
+                "Blue-Yellow-Red",
+                "Green Fire",
+                "turbo",
+                "viridis",
+                "plasma",
+                "inferno",
+                "magma",
+                "cividis",
+                "jet",
+            ]
         )
+        self.gate_label_mode_combo = QComboBox()
+        self.gate_label_mode_combo.addItems([mode.value for mode in GateLabelMode])
         self.font_size_spin = QSpinBox()
         self.font_size_spin.setRange(6, 32)
         self.export_dpi_spin = QSpinBox()
@@ -116,6 +150,7 @@ class PlotConfigPanel(QWidget):
         style_layout.addRow("Density gridsize:", self.density_gridsize_spin)
         style_layout.addRow("Density min count:", self.density_min_count_spin)
         style_layout.addRow("Density colormap:", self.density_cmap_combo)
+        style_layout.addRow("Gate label:", self.gate_label_mode_combo)
         style_layout.addRow("Font size:", self.font_size_spin)
         style_layout.addRow("Export DPI:", self.export_dpi_spin)
 
@@ -132,7 +167,12 @@ class PlotConfigPanel(QWidget):
         self._connect_signals()
         self._set_enabled(False)
 
-    def set_plot_context(self, config: PlotConfig | None, sample: SampleData | None) -> None:
+    def set_plot_context(
+        self,
+        config: PlotConfig | None,
+        sample: SampleData | None,
+        source_options: list[tuple[str, str | None, str]] | None = None,
+    ) -> None:
         self._config = config.clone() if config else None
         self._sample = sample
         has_context = self._config is not None and self._sample is not None
@@ -141,6 +181,7 @@ class PlotConfigPanel(QWidget):
         if not has_context:
             self.plot_label.setText("No plot selected")
             self.sample_label.setText("No sample")
+            self.source_combo.clear()
             self.x_param_combo.clear()
             self.y_param_combo.clear()
             return
@@ -150,6 +191,7 @@ class PlotConfigPanel(QWidget):
 
         blockers = [
             QSignalBlocker(self.plot_type_combo),
+            QSignalBlocker(self.source_combo),
             QSignalBlocker(self.x_param_combo),
             QSignalBlocker(self.y_param_combo),
             QSignalBlocker(self.x_scale_combo),
@@ -163,6 +205,7 @@ class PlotConfigPanel(QWidget):
             QSignalBlocker(self.density_gridsize_spin),
             QSignalBlocker(self.density_min_count_spin),
             QSignalBlocker(self.density_cmap_combo),
+            QSignalBlocker(self.gate_label_mode_combo),
             QSignalBlocker(self.font_size_spin),
             QSignalBlocker(self.export_dpi_spin),
             QSignalBlocker(self.x_min_edit),
@@ -173,6 +216,10 @@ class PlotConfigPanel(QWidget):
         _ = blockers
 
         self.plot_type_combo.setCurrentText(self._config.plot_type.value)
+        self.source_combo.clear()
+        for source_kind, gate_id, label in source_options or []:
+            self.source_combo.addItem(label, (source_kind, gate_id))
+        self._set_source_selection()
         self.x_param_combo.clear()
         self.y_param_combo.clear()
         self.x_param_combo.addItems(self._sample.parameters)
@@ -190,6 +237,7 @@ class PlotConfigPanel(QWidget):
         self.density_gridsize_spin.setValue(self._config.density_gridsize)
         self.density_min_count_spin.setValue(self._config.density_min_count)
         self.density_cmap_combo.setCurrentText(self._config.density_color_map)
+        self.gate_label_mode_combo.setCurrentText(self._config.gate_label_mode.value)
         self.font_size_spin.setValue(self._config.font_size)
         self.export_dpi_spin.setValue(self._config.export_dpi)
         self.x_min_edit.setText("" if self._config.x_min is None else str(self._config.x_min))
@@ -200,6 +248,7 @@ class PlotConfigPanel(QWidget):
 
     def _connect_signals(self) -> None:
         self.plot_type_combo.currentTextChanged.connect(self._emit_updated_config)
+        self.source_combo.currentTextChanged.connect(self._emit_updated_config)
         self.x_param_combo.currentTextChanged.connect(self._emit_updated_config)
         self.y_param_combo.currentTextChanged.connect(self._emit_updated_config)
         self.x_scale_combo.currentTextChanged.connect(self._emit_updated_config)
@@ -213,6 +262,7 @@ class PlotConfigPanel(QWidget):
         self.density_gridsize_spin.valueChanged.connect(self._emit_updated_config)
         self.density_min_count_spin.valueChanged.connect(self._emit_updated_config)
         self.density_cmap_combo.currentTextChanged.connect(self._emit_updated_config)
+        self.gate_label_mode_combo.currentTextChanged.connect(self._emit_updated_config)
         self.font_size_spin.valueChanged.connect(self._emit_updated_config)
         self.export_dpi_spin.valueChanged.connect(self._emit_updated_config)
         self.x_min_edit.editingFinished.connect(self._emit_updated_config)
@@ -224,6 +274,7 @@ class PlotConfigPanel(QWidget):
     def _set_enabled(self, enabled: bool) -> None:
         for widget in [
             self.plot_type_combo,
+            self.source_combo,
             self.x_param_combo,
             self.y_param_combo,
             self.x_scale_combo,
@@ -241,6 +292,7 @@ class PlotConfigPanel(QWidget):
             self.density_gridsize_spin,
             self.density_min_count_spin,
             self.density_cmap_combo,
+            self.gate_label_mode_combo,
             self.font_size_spin,
             self.export_dpi_spin,
             self.export_button,
@@ -252,6 +304,11 @@ class PlotConfigPanel(QWidget):
             return
 
         self._config.plot_type = PlotType(self.plot_type_combo.currentText())
+        source_data = self.source_combo.currentData()
+        if source_data:
+            source_kind, source_gate_id = source_data
+            self._config.source_kind = source_kind
+            self._config.source_gate_id = source_gate_id
         self._config.x_param = self.x_param_combo.currentText()
         self._config.y_param = self.y_param_combo.currentText() or None
         self._config.x_scale = AxisScale(self.x_scale_combo.currentText())
@@ -265,6 +322,7 @@ class PlotConfigPanel(QWidget):
         self._config.density_gridsize = self.density_gridsize_spin.value()
         self._config.density_min_count = self.density_min_count_spin.value()
         self._config.density_color_map = self.density_cmap_combo.currentText()
+        self._config.gate_label_mode = GateLabelMode(self.gate_label_mode_combo.currentText())
         self._config.font_size = self.font_size_spin.value()
         self._config.export_dpi = self.export_dpi_spin.value()
         self._config.x_min = _to_float(self.x_min_edit.text())
@@ -294,6 +352,23 @@ class PlotConfigPanel(QWidget):
         self.bins_spin.setEnabled(self._config is not None and is_histogram)
         self.histogram_style_combo.setEnabled(self._config is not None and is_histogram)
         self.histogram_color_combo.setEnabled(self._config is not None and is_histogram)
+
+    def _set_source_selection(self) -> None:
+        if self._config is None:
+            return
+        for index in range(self.source_combo.count()):
+            source_data = self.source_combo.itemData(index)
+            if not source_data:
+                continue
+            source_kind, source_gate_id = source_data
+            if (
+                source_kind == self._config.source_kind
+                and source_gate_id == self._config.source_gate_id
+            ):
+                self.source_combo.setCurrentIndex(index)
+                return
+        if self.source_combo.count() > 0:
+            self.source_combo.setCurrentIndex(0)
 
 
 def _to_float(value: str) -> float | None:

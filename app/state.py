@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections import defaultdict
+
 from PySide6.QtCore import QObject, Signal
 
-from app.models import ExperimentData, PlotConfig, SampleData
+from app.models import ExperimentData, GateDefinition, PlotConfig, SampleData
 
 
 class AppState(QObject):
@@ -11,6 +13,7 @@ class AppState(QObject):
     selected_plot_changed = Signal(object)
     plot_config_changed = Signal(object)
     layout_changed = Signal(int, int)
+    gates_changed = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -18,6 +21,8 @@ class AppState(QObject):
         self.current_sample_ref: tuple[str, str] | None = None
         self.current_plot_cell_id: int | None = None
         self.plot_configs: dict[int, PlotConfig] = {}
+        self.gates: dict[str, GateDefinition] = {}
+        self._gate_name_counters: dict[str, int] = defaultdict(int)
         self.grid_rows: int = 2
         self.grid_columns: int = 3
 
@@ -62,6 +67,84 @@ class AppState(QObject):
         if self.current_plot_cell_id is None:
             return None
         return self.plot_configs.get(self.current_plot_cell_id)
+
+    def add_gate(self, gate: GateDefinition) -> None:
+        self.gates[gate.id] = gate
+        self.gates_changed.emit()
+
+    def add_gates(self, gates: list[GateDefinition]) -> None:
+        for gate in gates:
+            self.gates[gate.id] = gate
+        self.gates_changed.emit()
+
+    def update_gate(self, gate: GateDefinition) -> None:
+        self.gates[gate.id] = gate
+        self.gates_changed.emit()
+
+    def update_gates(self, gates: list[GateDefinition]) -> None:
+        for gate in gates:
+            self.gates[gate.id] = gate
+        self.gates_changed.emit()
+
+    def remove_gate(self, gate_id: str) -> None:
+        if gate_id not in self.gates:
+            return
+        del self.gates[gate_id]
+        self.gates_changed.emit()
+
+    def remove_gates(self, gate_ids: list[str]) -> None:
+        removed = False
+        for gate_id in gate_ids:
+            if gate_id in self.gates:
+                del self.gates[gate_id]
+                removed = True
+        if removed:
+            self.gates_changed.emit()
+
+    def remove_gates_for_plot(self, plot_cell_id: int) -> None:
+        gate_ids = [gate_id for gate_id, gate in self.gates.items() if gate.plot_cell_id == plot_cell_id]
+        if not gate_ids:
+            return
+        for gate_id in gate_ids:
+            del self.gates[gate_id]
+        self.gates_changed.emit()
+
+    def replace_gates_for_plot(self, plot_cell_id: int, gates: list[GateDefinition]) -> None:
+        existing_gate_ids = [gate_id for gate_id, gate in self.gates.items() if gate.plot_cell_id == plot_cell_id]
+        for gate_id in existing_gate_ids:
+            del self.gates[gate_id]
+        for gate in gates:
+            self.gates[gate.id] = gate
+        self.gates_changed.emit()
+
+    def has_gate(self, gate_id: str | None) -> bool:
+        return bool(gate_id and gate_id in self.gates)
+
+    def gates_for_sample(self, experiment_id: str, sample_id: str) -> list[GateDefinition]:
+        return sorted(
+            [
+                gate
+                for gate in self.gates.values()
+                if gate.experiment_id == experiment_id and gate.sample_id == sample_id
+            ],
+            key=lambda gate: gate.name,
+        )
+
+    def gates_for_plot(self, plot_cell_id: int) -> list[GateDefinition]:
+        plot_config = self.plot_configs.get(plot_cell_id)
+        if plot_config is None:
+            return []
+        return [
+            gate
+            for gate in self.gates.values()
+            if gate.plot_cell_id == plot_cell_id
+            and gate.experiment_id == plot_config.experiment_id
+            and gate.sample_id == plot_config.sample_id
+        ]
+
+    def next_gate_name(self, prefix: str) -> str:
+        self._gate_name_counters[prefix] += 1
+        return f"{prefix}{self._gate_name_counters[prefix]}"
 
     def find_experiment(self, experiment_id: str) -> ExperimentData | None:
         for experiment in self.experiments:

@@ -18,7 +18,7 @@ RIGHT_PANEL_WIDTH = 320
 PLOT_CELL_WIDTH = 320
 PLOT_CELL_HEIGHT = 300
 
-SELECTED_PLOT_BOX_MIN_HEIGHT = 88
+SELECTED_PLOT_BOX_MIN_HEIGHT = 116
 AXES_BOX_MIN_HEIGHT = 192
 RANGES_BOX_MIN_HEIGHT = 206
 STYLE_BOX_MIN_HEIGHT = 224
@@ -77,6 +77,10 @@ def build_main_stylesheet() -> str:
             color: {SIDE_PANEL_TEXT};
             border: 1px solid {SIDE_PANEL_BORDER};
             padding: 3px;
+            min-width: 170px;
+        }}
+        QWidget#sidePanel QComboBox {{
+            combobox-popup: 1;
         }}
         QWidget#sidePanel QComboBox::drop-down {{
             border-left: 1px solid {SIDE_PANEL_BORDER};
