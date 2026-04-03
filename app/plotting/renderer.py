@@ -12,6 +12,8 @@ from app.models import (
     AxisScale,
     GateDefinition,
     GateType,
+    OverlayPlot,
+    OverlaySeries,
     PlotConfig,
     PlotType,
     PopulationStatistics,
@@ -79,6 +81,77 @@ def render_plot(
     return figure
 
 
+def render_overlay_plot(
+    overlay_plot: OverlayPlot,
+    series_frames: list[tuple[OverlaySeries, np.ndarray]],
+    gates: list[GateDefinition] | None = None,
+    selected_gate_id: str | None = None,
+) -> Figure:
+    inner_width = max(PLOT_CELL_WIDTH - 22, 220)
+    inner_height = max(PLOT_CELL_HEIGHT - 22, 200)
+    figure = Figure(
+        figsize=(inner_width / 100.0, inner_height / 100.0),
+        dpi=100,
+        facecolor="white",
+    )
+    axis = figure.add_subplot(111)
+    axis.set_facecolor("white")
+    effective_font_size = _effective_font_size(overlay_plot.font_size)
+
+    valid_series: list[tuple[OverlaySeries, np.ndarray]] = []
+    for series, values in series_frames:
+        filtered = _filter_valid(np.asarray(values, dtype=float), overlay_plot.x_scale)
+        if filtered.size:
+            valid_series.append((series, filtered))
+
+    if not valid_series:
+        axis.text(0.5, 0.5, "No valid histogram data", ha="center", va="center")
+    else:
+        all_values = np.concatenate([values for _, values in valid_series])
+        bins = _overlay_histogram_bins(all_values, overlay_plot)
+        for series, values in valid_series:
+            color = _resolve_histogram_color(series.color)
+            alpha = max(0.0, min(float(series.alpha), 1.0))
+            if series.histogram_style == "Bar":
+                axis.hist(
+                    values,
+                    bins=bins,
+                    histtype="bar",
+                    color=color,
+                    edgecolor=color,
+                    linewidth=0.35,
+                    alpha=alpha,
+                )
+            else:
+                counts, bin_edges = np.histogram(values, bins=bins)
+                axis.stairs(
+                    counts,
+                    bin_edges,
+                    baseline=None,
+                    fill=False,
+                    color=color,
+                    linewidth=1.45,
+                    alpha=alpha,
+                )
+
+    axis.set_title(overlay_plot.title, fontsize=effective_font_size + 1)
+    axis.set_xlabel(overlay_plot.x_param, fontsize=effective_font_size)
+    axis.set_ylabel("Count", fontsize=effective_font_size)
+    axis.tick_params(axis="both", labelsize=max(effective_font_size - 1, 7))
+    axis.set_xscale("log" if overlay_plot.x_scale == AxisScale.LOG else "linear")
+    if not overlay_plot.x_auto_range and overlay_plot.x_min is not None and overlay_plot.x_max is not None:
+        axis.set_xlim(overlay_plot.x_min, overlay_plot.x_max)
+    _apply_scalar_formatter(axis.xaxis, axis.get_xlim())
+    _apply_scalar_formatter(axis.yaxis, axis.get_ylim())
+    fixed_x_limits = axis.get_xlim()
+    fixed_y_limits = axis.get_ylim()
+    _draw_overlay_gates(axis, gates or [], selected_gate_id)
+    axis.set_xlim(fixed_x_limits)
+    axis.set_ylim(fixed_y_limits)
+    figure.tight_layout(pad=0.8)
+    return figure
+
+
 def _draw_histogram(axis, x_values: np.ndarray, config: PlotConfig) -> None:
     x_values = _filter_valid(x_values, config.x_scale)
     if x_values.size == 0:
@@ -114,6 +187,14 @@ def _draw_histogram(axis, x_values: np.ndarray, config: PlotConfig) -> None:
         color=histogram_color,
         linewidth=1.35,
     )
+
+
+def _overlay_histogram_bins(values: np.ndarray, overlay_plot: OverlayPlot):
+    if overlay_plot.x_scale == AxisScale.LOG:
+        lower = max(float(np.nanmin(values)), 1e-6)
+        upper = max(float(np.nanmax(values)), lower * 10.0)
+        return np.logspace(np.log10(lower), np.log10(upper), overlay_plot.bins)
+    return overlay_plot.bins
 
 
 def _draw_dot_plot(axis, x_values: np.ndarray, y_values: np.ndarray, config: PlotConfig) -> None:
@@ -424,3 +505,18 @@ def _draw_point_handles(axis, points: list[tuple[float, float]], color: str) -> 
         zorder=6,
         clip_on=True,
     )
+
+
+def _draw_overlay_gates(axis, gates: list[GateDefinition], selected_gate_id: str | None) -> None:
+    y_min, y_max = axis.get_ylim()
+    label_y = y_max * 0.94 if y_max > 0 else y_min
+    for gate in gates:
+        gate_color = _resolve_gate_color(gate.color)
+        line_width = 2.2 if gate.id == selected_gate_id else 1.2
+        lower = min(gate.x1 or 0.0, gate.x2 or 0.0)
+        upper = max(gate.x1 or 0.0, gate.x2 or 0.0)
+        axis.axvline(lower, color=gate_color, linestyle="--", linewidth=line_width)
+        axis.axvline(upper, color=gate_color, linestyle="--", linewidth=line_width)
+        axis.text(lower + ((upper - lower) * 0.05), label_y, gate.name, color=gate_color, fontsize=9, clip_on=True)
+        if gate.id == selected_gate_id:
+            _draw_point_handles(axis, [(lower, label_y), (upper, label_y)], gate_color)

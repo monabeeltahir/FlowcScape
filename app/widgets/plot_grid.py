@@ -12,6 +12,7 @@ from app.widgets.plot_cell import PlotCell
 class PlotGridWidget(QWidget):
     cell_selected = Signal(int)
     insert_requested = Signal(int, object)
+    send_to_overlay_requested = Signal(int)
     export_requested = Signal(int)
     clear_requested = Signal(int)
     gate_created = Signal(int, object, object)
@@ -20,12 +21,18 @@ class PlotGridWidget(QWidget):
     gate_geometry_changed = Signal(int, str, object)
     statistics_requested = Signal(int, object)
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        allowed_plot_types=None,
+        show_send_to_overlay: bool = False,
+    ) -> None:
         super().__init__()
         self._layout = QGridLayout(self)
         self._layout.setContentsMargins(10, 10, 10, 10)
         self._layout.setSpacing(8)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self._allowed_plot_types = allowed_plot_types
+        self._show_send_to_overlay = show_send_to_overlay
         self.cells: dict[int, PlotCell] = {}
         self.rows = 2
         self.columns = 3
@@ -74,9 +81,14 @@ class PlotGridWidget(QWidget):
         self.cells.clear()
         total_cells = self.rows * self.columns
         for cell_id in range(total_cells):
-            cell = PlotCell(cell_id)
+            cell = PlotCell(
+                cell_id,
+                allowed_plot_types=self._allowed_plot_types,
+                show_send_to_overlay=self._show_send_to_overlay,
+            )
             cell.selected.connect(self.cell_selected.emit)
             cell.insert_requested.connect(self.insert_requested.emit)
+            cell.send_to_overlay_requested.connect(self.send_to_overlay_requested.emit)
             cell.export_requested.connect(self.export_requested.emit)
             cell.clear_requested.connect(self.clear_requested.emit)
             cell.gate_created.connect(self.gate_created.emit)

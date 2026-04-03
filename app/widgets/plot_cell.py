@@ -12,13 +12,14 @@ from app.models import GateDefinition, GateType, PlotType
 from app.theme import PLOT_CELL_HEIGHT, PLOT_CELL_WIDTH
 
 LIVE_GATE_EDGE_COLOR = "#ff2d20"
-LIVE_GATE_FILL_COLOR = "#fbff00"
+LIVE_GATE_FILL_COLOR = "#ff7b00"
 LIVE_GATE_LINE_COLOR = "#ff2d20"
 
 
 class PlotCell(QFrame):
     selected = Signal(int)
     insert_requested = Signal(int, object)
+    send_to_overlay_requested = Signal(int)
     export_requested = Signal(int)
     clear_requested = Signal(int)
     gate_created = Signal(int, object, object)
@@ -27,9 +28,24 @@ class PlotCell(QFrame):
     gate_geometry_changed = Signal(int, str, object)
     statistics_requested = Signal(int, object)
 
-    def __init__(self, cell_id: int) -> None:
+    def __init__(
+        self,
+        cell_id: int,
+        allowed_plot_types: tuple[PlotType, ...] | None = None,
+        show_send_to_overlay: bool = False,
+    ) -> None:
         super().__init__()
         self.cell_id = cell_id
+        self._allowed_plot_types = (
+            allowed_plot_types
+            if allowed_plot_types is not None
+            else (
+                PlotType.HISTOGRAM,
+                PlotType.DOT,
+                PlotType.DENSITY,
+            )
+        )
+        self._show_send_to_overlay = show_send_to_overlay
         self._canvas: FigureCanvasQTAgg | None = None
         self._active_selector = None
         self._quadrant_connection_id: int | None = None
@@ -101,25 +117,24 @@ class PlotCell(QFrame):
 
     def _show_context_menu(self, pos, global_pos=None) -> None:
         menu = QMenu(self)
-        insert_menu = menu.addMenu("Insert")
+        if self._allowed_plot_types:
+            insert_menu = menu.addMenu("Insert")
+            for plot_type in self._allowed_plot_types:
+                action = QAction(plot_type.value, self)
+                action.triggered.connect(
+                    lambda _checked=False, selected_plot_type=plot_type: self.insert_requested.emit(
+                        self.cell_id,
+                        selected_plot_type,
+                    )
+                )
+                insert_menu.addAction(action)
 
-        histogram_action = QAction(PlotType.HISTOGRAM.value, self)
-        histogram_action.triggered.connect(
-            lambda: self.insert_requested.emit(self.cell_id, PlotType.HISTOGRAM)
-        )
-        insert_menu.addAction(histogram_action)
-
-        dot_action = QAction(PlotType.DOT.value, self)
-        dot_action.triggered.connect(
-            lambda: self.insert_requested.emit(self.cell_id, PlotType.DOT)
-        )
-        insert_menu.addAction(dot_action)
-
-        density_action = QAction(PlotType.DENSITY.value, self)
-        density_action.triggered.connect(
-            lambda: self.insert_requested.emit(self.cell_id, PlotType.DENSITY)
-        )
-        insert_menu.addAction(density_action)
+        if self._show_send_to_overlay and self._canvas is not None:
+            send_to_overlay_action = QAction("Send To Overlay", self)
+            send_to_overlay_action.triggered.connect(
+                lambda: self.send_to_overlay_requested.emit(self.cell_id)
+            )
+            menu.addAction(send_to_overlay_action)
 
         if self._gate_entries:
             edit_menu = menu.addMenu("Edit Gate")
