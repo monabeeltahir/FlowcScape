@@ -46,6 +46,7 @@ from app.state import AppState
 from app.theme import LEFT_PANEL_WIDTH, RIGHT_PANEL_WIDTH, build_main_stylesheet
 from app.widgets.experiment_tree import ExperimentTree
 from app.widgets.gate_editor_dialog import GateEditorDialog
+from app.widgets.overlay_window import OverlayWindow
 from app.widgets.plot_config_panel import PlotConfigPanel
 from app.widgets.plot_grid import PlotGridWidget
 from app.widgets.stepper_spinbox import StepperSpinBox
@@ -55,6 +56,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.state = AppState()
+        self.overlay_window: OverlayWindow | None = None
         self._selected_gate_id: str | None = None
         self._selected_gate_cell_id: int | None = None
         self.setWindowTitle("Attune-Style Flow Cytometry Dashboard")
@@ -64,7 +66,7 @@ class MainWindow(QMainWindow):
         self.left_panel.setObjectName("sidePanel")
         self.left_panel.setMinimumWidth(LEFT_PANEL_WIDTH)
 
-        self.plot_grid = PlotGridWidget()
+        self.plot_grid = PlotGridWidget(show_send_to_overlay=True)
         self.grid_scroll_area = QScrollArea()
         self.grid_scroll_area.setWidget(self.plot_grid)
         self.grid_scroll_area.setWidgetResizable(False)
@@ -138,6 +140,7 @@ class MainWindow(QMainWindow):
         self.experiment_tree.sample_activated.connect(self._apply_sample_to_workspace)
         self.plot_grid.cell_selected.connect(self._select_plot_cell)
         self.plot_grid.insert_requested.connect(self._insert_plot)
+        self.plot_grid.send_to_overlay_requested.connect(self._send_plot_to_overlay)
         self.plot_grid.gate_created.connect(self._handle_gate_created)
         self.plot_grid.gate_selected.connect(self._select_gate)
         self.plot_grid.gate_edit_requested.connect(self._edit_gate)
@@ -157,6 +160,50 @@ class MainWindow(QMainWindow):
 
     def _apply_styles(self) -> None:
         self.setStyleSheet(build_main_stylesheet())
+
+    def _get_overlay_window(self) -> OverlayWindow:
+        if self.overlay_window is None:
+            self.overlay_window = OverlayWindow(
+                sample_resolver=self.state.find_sample,
+                main_gates_provider=lambda: self.state.gates,
+                parent=self,
+            )
+        return self.overlay_window
+
+    def _show_overlay_window(self) -> None:
+        overlay_window = self._get_overlay_window()
+        overlay_window.show()
+        overlay_window.raise_()
+        overlay_window.activateWindow()
+
+    def _send_selected_plot_to_overlay(self) -> None:
+        if self.state.current_plot_cell_id is None:
+            self._show_error("No Plot Selected", "Select a histogram plot before sending it to overlay.")
+            return
+        self._send_plot_to_overlay(self.state.current_plot_cell_id)
+
+    def _send_plot_to_overlay(self, cell_id: int) -> None:
+        config = self.state.plot_configs.get(cell_id)
+        if config is None:
+            self._show_error("No Plot Selected", "Insert and select a histogram plot before sending it to overlay.")
+            return
+        if config.plot_type != PlotType.HISTOGRAM:
+            self._show_error(
+                "Histogram Required",
+                "Only histogram plots can be sent to the overlay workspace.",
+            )
+            return
+
+        sample = self.state.find_sample(config.experiment_id, config.sample_id)
+        if sample is None:
+            self._show_error("Missing Sample", "The selected plot is no longer linked to a sample.")
+            return
+
+        overlay_window = self._get_overlay_window()
+        if overlay_window.send_histogram_plot(config, sample.name):
+            self.statusBar().showMessage(
+                f"Sent '{config.title or sample.name}' to the overlay workspace."
+            )
 
     def _open_fcs_files(self) -> None:
         file_paths, _ = QFileDialog.getOpenFileNames(
@@ -264,6 +311,10 @@ class MainWindow(QMainWindow):
         workspace_action.triggered.connect(self._show_workspace_toolbar)
         self.top_toolbar.addAction(workspace_action)
 
+        overlay_action = QAction("Overlay", self)
+        overlay_action.triggered.connect(self._show_overlay_window)
+        self.top_toolbar.addAction(overlay_action)
+
     def _show_workspace_toolbar(self) -> None:
         self.top_toolbar.clear()
 
@@ -298,6 +349,16 @@ class MainWindow(QMainWindow):
         gate_color_action = QAction("Gate Color", self)
         gate_color_action.triggered.connect(self._change_selected_gate_color)
         self.top_toolbar.addAction(gate_color_action)
+
+        self.top_toolbar.addSeparator()
+
+        overlay_action = QAction("Overlay", self)
+        overlay_action.triggered.connect(self._show_overlay_window)
+        self.top_toolbar.addAction(overlay_action)
+
+        send_to_overlay_action = QAction("Send Selected To Overlay", self)
+        send_to_overlay_action.triggered.connect(self._send_selected_plot_to_overlay)
+        self.top_toolbar.addAction(send_to_overlay_action)
 
         self.top_toolbar.addSeparator()
 
@@ -741,6 +802,8 @@ class MainWindow(QMainWindow):
             self._render_plot(cell_id)
 
         self._sync_plot_panel(self.state.get_selected_plot_config())
+        if self.overlay_window is not None:
+            self.overlay_window.refresh_all()
 
     def _build_gate_statistics(
         self,

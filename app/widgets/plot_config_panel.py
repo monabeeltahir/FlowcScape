@@ -71,15 +71,31 @@ class PlotConfigPanel(QWidget):
         self.plot_type_combo.addItems([plot_type.value for plot_type in PlotType])
 
         self.x_param_combo = QComboBox()
+        self.x_component_combo = QComboBox()
         self.y_param_combo = QComboBox()
+        self.y_component_combo = QComboBox()
         self.x_scale_combo = QComboBox()
         self.x_scale_combo.addItems([AxisScale.LINEAR.value, AxisScale.LOG.value])
         self.y_scale_combo = QComboBox()
         self.y_scale_combo.addItems([AxisScale.LINEAR.value, AxisScale.LOG.value])
 
+        x_param_row = QWidget()
+        x_param_layout = QHBoxLayout(x_param_row)
+        x_param_layout.setContentsMargins(0, 0, 0, 0)
+        x_param_layout.setSpacing(6)
+        x_param_layout.addWidget(self.x_param_combo, 2)
+        x_param_layout.addWidget(self.x_component_combo, 1)
+
+        y_param_row = QWidget()
+        y_param_layout = QHBoxLayout(y_param_row)
+        y_param_layout.setContentsMargins(0, 0, 0, 0)
+        y_param_layout.setSpacing(6)
+        y_param_layout.addWidget(self.y_param_combo, 2)
+        y_param_layout.addWidget(self.y_component_combo, 1)
+
         axis_layout.addRow("Type:", self.plot_type_combo)
-        axis_layout.addRow("X parameter:", self.x_param_combo)
-        axis_layout.addRow("Y parameter:", self.y_param_combo)
+        axis_layout.addRow("X parameter:", x_param_row)
+        axis_layout.addRow("Y parameter:", y_param_row)
         axis_layout.addRow("X scale:", self.x_scale_combo)
         axis_layout.addRow("Y scale:", self.y_scale_combo)
 
@@ -183,7 +199,9 @@ class PlotConfigPanel(QWidget):
             self.sample_label.setText("No sample")
             self.source_combo.clear()
             self.x_param_combo.clear()
+            self.x_component_combo.clear()
             self.y_param_combo.clear()
+            self.y_component_combo.clear()
             return
 
         self.plot_label.setText(f"Cell {self._config.cell_id + 1}")
@@ -193,7 +211,9 @@ class PlotConfigPanel(QWidget):
             QSignalBlocker(self.plot_type_combo),
             QSignalBlocker(self.source_combo),
             QSignalBlocker(self.x_param_combo),
+            QSignalBlocker(self.x_component_combo),
             QSignalBlocker(self.y_param_combo),
+            QSignalBlocker(self.y_component_combo),
             QSignalBlocker(self.x_scale_combo),
             QSignalBlocker(self.y_scale_combo),
             QSignalBlocker(self.x_auto_checkbox),
@@ -220,12 +240,9 @@ class PlotConfigPanel(QWidget):
         for source_kind, gate_id, label in source_options or []:
             self.source_combo.addItem(label, (source_kind, gate_id))
         self._set_source_selection()
-        self.x_param_combo.clear()
-        self.y_param_combo.clear()
-        self.x_param_combo.addItems(self._sample.parameters)
-        self.y_param_combo.addItems([""] + self._sample.parameters)
-        self.x_param_combo.setCurrentText(self._config.x_param)
-        self.y_param_combo.setCurrentText(self._config.y_param or "")
+        self._populate_axis_selectors()
+        self._set_axis_selection("x", self._config.x_param)
+        self._set_axis_selection("y", self._config.y_param)
         self.x_scale_combo.setCurrentText(self._config.x_scale.value)
         self.y_scale_combo.setCurrentText(self._config.y_scale.value)
         self.x_auto_checkbox.setChecked(self._config.x_auto_range)
@@ -249,8 +266,10 @@ class PlotConfigPanel(QWidget):
     def _connect_signals(self) -> None:
         self.plot_type_combo.currentTextChanged.connect(self._emit_updated_config)
         self.source_combo.currentTextChanged.connect(self._emit_updated_config)
-        self.x_param_combo.currentTextChanged.connect(self._emit_updated_config)
-        self.y_param_combo.currentTextChanged.connect(self._emit_updated_config)
+        self.x_param_combo.currentTextChanged.connect(lambda _text: self._handle_axis_base_changed("x"))
+        self.x_component_combo.currentTextChanged.connect(self._emit_updated_config)
+        self.y_param_combo.currentTextChanged.connect(lambda _text: self._handle_axis_base_changed("y"))
+        self.y_component_combo.currentTextChanged.connect(self._emit_updated_config)
         self.x_scale_combo.currentTextChanged.connect(self._emit_updated_config)
         self.y_scale_combo.currentTextChanged.connect(self._emit_updated_config)
         self.x_auto_checkbox.toggled.connect(self._emit_updated_config)
@@ -276,7 +295,9 @@ class PlotConfigPanel(QWidget):
             self.plot_type_combo,
             self.source_combo,
             self.x_param_combo,
+            self.x_component_combo,
             self.y_param_combo,
+            self.y_component_combo,
             self.x_scale_combo,
             self.y_scale_combo,
             self.x_auto_checkbox,
@@ -309,8 +330,8 @@ class PlotConfigPanel(QWidget):
             source_kind, source_gate_id = source_data
             self._config.source_kind = source_kind
             self._config.source_gate_id = source_gate_id
-        self._config.x_param = self.x_param_combo.currentText()
-        self._config.y_param = self.y_param_combo.currentText() or None
+        self._config.x_param = self._selected_axis_parameter("x")
+        self._config.y_param = self._selected_axis_parameter("y") or None
         self._config.x_scale = AxisScale(self.x_scale_combo.currentText())
         self._config.y_scale = AxisScale(self.y_scale_combo.currentText())
         self._config.x_auto_range = self.x_auto_checkbox.isChecked()
@@ -339,6 +360,7 @@ class PlotConfigPanel(QWidget):
             else True
         )
         self.y_param_combo.setEnabled(not is_histogram)
+        self.y_component_combo.setEnabled(not is_histogram and self.y_param_combo.isEnabled())
         self.y_scale_combo.setEnabled(not is_histogram)
         self.y_auto_checkbox.setEnabled(not is_histogram)
         self.y_min_edit.setEnabled(not is_histogram and not self.y_auto_checkbox.isChecked())
@@ -370,6 +392,80 @@ class PlotConfigPanel(QWidget):
         if self.source_combo.count() > 0:
             self.source_combo.setCurrentIndex(0)
 
+    def _populate_axis_selectors(self) -> None:
+        if self._sample is None:
+            return
+
+        axis_options = _build_axis_option_map(self._sample.parameters)
+
+        self.x_param_combo.clear()
+        self.x_component_combo.clear()
+        self.y_param_combo.clear()
+        self.y_component_combo.clear()
+
+        base_names = list(axis_options.keys())
+        self.x_param_combo.addItems(base_names)
+        self.y_param_combo.addItem("")
+        self.y_param_combo.addItems(base_names)
+
+        self._refresh_component_combo("x")
+        self._refresh_component_combo("y")
+
+    def _set_axis_selection(self, axis_name: str, full_parameter: str | None) -> None:
+        base_name, component_name = _split_parameter_name(full_parameter)
+        param_combo, component_combo = self._axis_combos(axis_name)
+
+        if axis_name == "y" and not full_parameter:
+            param_combo.setCurrentIndex(0)
+            self._refresh_component_combo(axis_name)
+            return
+
+        target_base = base_name or (param_combo.itemText(0) if param_combo.count() else "")
+        base_index = param_combo.findText(target_base)
+        if base_index < 0 and param_combo.count() > 0:
+            base_index = 0 if axis_name == "x" else 1 if param_combo.count() > 1 else 0
+        if base_index >= 0:
+            param_combo.setCurrentIndex(base_index)
+        self._refresh_component_combo(axis_name)
+
+        if component_name:
+            component_index = component_combo.findText(component_name)
+            if component_index >= 0:
+                component_combo.setCurrentIndex(component_index)
+
+    def _refresh_component_combo(self, axis_name: str) -> None:
+        if self._sample is None:
+            return
+        param_combo, component_combo = self._axis_combos(axis_name)
+        selected_base = param_combo.currentText().strip()
+
+        with QSignalBlocker(component_combo):
+            component_combo.clear()
+            if not selected_base:
+                component_combo.setEnabled(False)
+                return
+
+            options = _build_axis_option_map(self._sample.parameters).get(selected_base, [])
+            component_combo.addItems(options or [""])
+            component_combo.setEnabled(True)
+
+    def _handle_axis_base_changed(self, axis_name: str) -> None:
+        self._refresh_component_combo(axis_name)
+        self._emit_updated_config()
+
+    def _selected_axis_parameter(self, axis_name: str) -> str:
+        param_combo, component_combo = self._axis_combos(axis_name)
+        base_name = param_combo.currentText().strip()
+        component_name = component_combo.currentText().strip()
+        if axis_name == "y" and not base_name:
+            return ""
+        return _compose_parameter_name(base_name, component_name)
+
+    def _axis_combos(self, axis_name: str) -> tuple[QComboBox, QComboBox]:
+        if axis_name == "x":
+            return self.x_param_combo, self.x_component_combo
+        return self.y_param_combo, self.y_component_combo
+
 
 def _to_float(value: str) -> float | None:
     cleaned = value.strip()
@@ -379,3 +475,36 @@ def _to_float(value: str) -> float | None:
         return float(cleaned)
     except ValueError:
         return None
+
+
+def _build_axis_option_map(parameters: list[str]) -> dict[str, list[str]]:
+    options: dict[str, list[str]] = {}
+    for parameter in parameters:
+        base_name, component_name = _split_parameter_name(parameter)
+        base_key = base_name or parameter
+        component_key = component_name or ""
+        options.setdefault(base_key, [])
+        if component_key and component_key not in options[base_key]:
+            options[base_key].append(component_key)
+        elif not options[base_key]:
+            options[base_key].append("")
+    return options
+
+
+def _split_parameter_name(parameter: str | None) -> tuple[str, str]:
+    if not parameter:
+        return "", ""
+    if "-" not in parameter:
+        return parameter, ""
+    base_name, component_name = parameter.rsplit("-", 1)
+    if component_name in {"A", "H", "W"}:
+        return base_name, component_name
+    return parameter, ""
+
+
+def _compose_parameter_name(base_name: str, component_name: str) -> str:
+    if not base_name:
+        return ""
+    if not component_name:
+        return base_name
+    return f"{base_name}-{component_name}"

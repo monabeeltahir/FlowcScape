@@ -1,0 +1,7 @@
+*.atx
+*.fcs
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/

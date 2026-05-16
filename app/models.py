@@ -133,3 +133,41 @@ def make_sample_id() -> str:
 
 def make_gate_id() -> str:
     return f"gate-{uuid4().hex[:10]}"
+
+
+def make_overlay_plot_id() -> str:
+    return f"overlay-{uuid4().hex[:10]}"
+
+
+def make_overlay_series_id() -> str:
+    return f"overlay-series-{uuid4().hex[:10]}"
+
+
+@dataclass(slots=True)
+class OverlaySeries:
+    id: str
+    label: str
+    experiment_id: str
+    sample_id: str
+    x_param: str
+    source_kind: DataSourceKind
+    source_gate_id: str | None
+    color: str = "black"
+    alpha: float = 0.85
+    histogram_style: str = "Line"
+
+
+@dataclass(slots=True)
+class OverlayPlot:
+    id: str
+    cell_id: int
+    title: str
+    x_param: str
+    x_scale: AxisScale = AxisScale.LINEAR
+    x_auto_range: bool = True
+    x_min: float | None = None
+    x_max: float | None = None
+    bins: int = 120
+    font_size: int = 10
+    export_dpi: int = 600
+    series: list[OverlaySeries] = field(default_factory=list)

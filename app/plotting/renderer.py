@@ -12,6 +12,8 @@ from app.models import (
     AxisScale,
     GateDefinition,
     GateType,
+    OverlayPlot,
+    OverlaySeries,
     PlotConfig,
     PlotType,
     PopulationStatistics,
@@ -69,10 +71,83 @@ def render_plot(
     axis.tick_params(axis="both", labelsize=max(effective_font_size - 1, 7))
     _apply_scales(axis, config)
     _apply_ranges(axis, config)
+    _stabilize_log_axes(axis, config, x_values, y_values)
     _apply_tick_formatting(axis, config)
     fixed_x_limits = axis.get_xlim()
     fixed_y_limits = axis.get_ylim()
     _draw_gate_overlays(axis, gates or [], config, gate_statistics or {}, selected_gate_id)
+    axis.set_xlim(fixed_x_limits)
+    axis.set_ylim(fixed_y_limits)
+    figure.tight_layout(pad=0.8)
+    return figure
+
+
+def render_overlay_plot(
+    overlay_plot: OverlayPlot,
+    series_frames: list[tuple[OverlaySeries, np.ndarray]],
+    gates: list[GateDefinition] | None = None,
+    selected_gate_id: str | None = None,
+) -> Figure:
+    inner_width = max(PLOT_CELL_WIDTH - 22, 220)
+    inner_height = max(PLOT_CELL_HEIGHT - 22, 200)
+    figure = Figure(
+        figsize=(inner_width / 100.0, inner_height / 100.0),
+        dpi=100,
+        facecolor="white",
+    )
+    axis = figure.add_subplot(111)
+    axis.set_facecolor("white")
+    effective_font_size = _effective_font_size(overlay_plot.font_size)
+
+    valid_series: list[tuple[OverlaySeries, np.ndarray]] = []
+    for series, values in series_frames:
+        filtered = _filter_valid(np.asarray(values, dtype=float), overlay_plot.x_scale)
+        if filtered.size:
+            valid_series.append((series, filtered))
+
+    if not valid_series:
+        axis.text(0.5, 0.5, "No valid histogram data", ha="center", va="center")
+    else:
+        all_values = np.concatenate([values for _, values in valid_series])
+        bins = _overlay_histogram_bins(all_values, overlay_plot)
+        for series, values in valid_series:
+            color = _resolve_histogram_color(series.color)
+            alpha = max(0.0, min(float(series.alpha), 1.0))
+            if series.histogram_style == "Bar":
+                axis.hist(
+                    values,
+                    bins=bins,
+                    histtype="bar",
+                    color=color,
+                    edgecolor=color,
+                    linewidth=0.35,
+                    alpha=alpha,
+                )
+            else:
+                counts, bin_edges = np.histogram(values, bins=bins)
+                axis.stairs(
+                    counts,
+                    bin_edges,
+                    baseline=None,
+                    fill=False,
+                    color=color,
+                    linewidth=1.45,
+                    alpha=alpha,
+                )
+
+    axis.set_title(overlay_plot.title, fontsize=effective_font_size + 1)
+    axis.set_xlabel(overlay_plot.x_param, fontsize=effective_font_size)
+    axis.set_ylabel("Count", fontsize=effective_font_size)
+    axis.tick_params(axis="both", labelsize=max(effective_font_size - 1, 7))
+    axis.set_xscale("log" if overlay_plot.x_scale == AxisScale.LOG else "linear")
+    if not overlay_plot.x_auto_range and overlay_plot.x_min is not None and overlay_plot.x_max is not None:
+        axis.set_xlim(overlay_plot.x_min, overlay_plot.x_max)
+    _stabilize_overlay_log_axis(axis, overlay_plot, series_frames)
+    _apply_scalar_formatter(axis.xaxis, axis.get_xlim())
+    _apply_scalar_formatter(axis.yaxis, axis.get_ylim())
+    fixed_x_limits = axis.get_xlim()
+    fixed_y_limits = axis.get_ylim()
+    _draw_overlay_gates(axis, gates or [], selected_gate_id)
     axis.set_xlim(fixed_x_limits)
     axis.set_ylim(fixed_y_limits)
     figure.tight_layout(pad=0.8)
@@ -116,6 +191,14 @@ def _draw_histogram(axis, x_values: np.ndarray, config: PlotConfig) -> None:
     )
 
 
+def _overlay_histogram_bins(values: np.ndarray, overlay_plot: OverlayPlot):
+    if overlay_plot.x_scale == AxisScale.LOG:
+        lower = max(float(np.nanmin(values)), 1e-6)
+        upper = max(float(np.nanmax(values)), lower * 10.0)
+        return np.logspace(np.log10(lower), np.log10(upper), overlay_plot.bins)
+    return overlay_plot.bins
+
+
 def _draw_dot_plot(axis, x_values: np.ndarray, y_values: np.ndarray, config: PlotConfig) -> None:
     x_values, y_values = _paired_values(x_values, y_values, config)
     if x_values.size == 0:
@@ -148,6 +231,8 @@ def _draw_density_plot(axis, x_values: np.ndarray, y_values: np.ndarray, config:
         bins="log",
         mincnt=config.density_min_count,
         cmap=_resolve_density_cmap(config.density_color_map),
+        xscale="log" if config.x_scale == AxisScale.LOG else "linear",
+        yscale="log" if config.y_scale == AxisScale.LOG else "linear",
         linewidths=0,
     )
 
@@ -190,6 +275,54 @@ def _apply_ranges(axis, config: PlotConfig) -> None:
         axis.set_ylim(config.y_min, config.y_max)
 
 
+def _stabilize_log_axes(
+    axis,
+    config: PlotConfig,
+    x_values: np.ndarray,
+    y_values: np.ndarray | None,
+) -> None:
+    if config.x_scale == AxisScale.LOG:
+        lower, upper = _positive_limits(x_values)
+        if lower is not None and upper is not None:
+            current_lower, current_upper = axis.get_xlim()
+            if current_lower <= 0 or not np.isfinite(current_lower) or not np.isfinite(current_upper):
+                axis.set_xlim(lower, upper)
+            elif current_upper <= current_lower:
+                axis.set_xlim(lower, upper)
+
+    if config.plot_type != PlotType.HISTOGRAM and config.y_scale == AxisScale.LOG and y_values is not None:
+        lower, upper = _positive_limits(y_values)
+        if lower is not None and upper is not None:
+            current_lower, current_upper = axis.get_ylim()
+            if current_lower <= 0 or not np.isfinite(current_lower) or not np.isfinite(current_upper):
+                axis.set_ylim(lower, upper)
+            elif current_upper <= current_lower:
+                axis.set_ylim(lower, upper)
+
+
+def _stabilize_overlay_log_axis(
+    axis,
+    overlay_plot: OverlayPlot,
+    series_frames: list[tuple[OverlaySeries, np.ndarray]],
+) -> None:
+    if overlay_plot.x_scale != AxisScale.LOG:
+        return
+
+    valid_arrays = [np.asarray(values, dtype=float) for _, values in series_frames if len(values)]
+    if not valid_arrays:
+        return
+
+    lower, upper = _positive_limits(np.concatenate(valid_arrays))
+    if lower is None or upper is None:
+        return
+
+    current_lower, current_upper = axis.get_xlim()
+    if current_lower <= 0 or not np.isfinite(current_lower) or not np.isfinite(current_upper):
+        axis.set_xlim(lower, upper)
+    elif current_upper <= current_lower:
+        axis.set_xlim(lower, upper)
+
+
 def _limit_points(
     x_values: np.ndarray,
     y_values: np.ndarray,
@@ -199,6 +332,16 @@ def _limit_points(
         return x_values, y_values
     indices = np.linspace(0, x_values.size - 1, max_points, dtype=int)
     return x_values[indices], y_values[indices]
+
+
+def _positive_limits(values: np.ndarray) -> tuple[float | None, float | None]:
+    valid = values[np.isfinite(values) & (values > 0)]
+    if valid.size == 0:
+        return None, None
+
+    lower = max(float(np.nanmin(valid)), 1e-6)
+    upper = max(float(np.nanmax(valid)), lower * 1.01)
+    return lower, upper
 
 
 def _effective_font_size(requested_size: int) -> int:
@@ -424,3 +567,18 @@ def _draw_point_handles(axis, points: list[tuple[float, float]], color: str) -> 
         zorder=6,
         clip_on=True,
     )
+
+
+def _draw_overlay_gates(axis, gates: list[GateDefinition], selected_gate_id: str | None) -> None:
+    y_min, y_max = axis.get_ylim()
+    label_y = y_max * 0.94 if y_max > 0 else y_min
+    for gate in gates:
+        gate_color = _resolve_gate_color(gate.color)
+        line_width = 2.2 if gate.id == selected_gate_id else 1.2
+        lower = min(gate.x1 or 0.0, gate.x2 or 0.0)
+        upper = max(gate.x1 or 0.0, gate.x2 or 0.0)
+        axis.axvline(lower, color=gate_color, linestyle="--", linewidth=line_width)
+        axis.axvline(upper, color=gate_color, linestyle="--", linewidth=line_width)
+        axis.text(lower + ((upper - lower) * 0.05), label_y, gate.name, color=gate_color, fontsize=9, clip_on=True)
+        if gate.id == selected_gate_id:
+            _draw_point_handles(axis, [(lower, label_y), (upper, label_y)], gate_color)
