@@ -71,6 +71,7 @@ def render_plot(
     axis.tick_params(axis="both", labelsize=max(effective_font_size - 1, 7))
     _apply_scales(axis, config)
     _apply_ranges(axis, config)
+    _stabilize_log_axes(axis, config, x_values, y_values)
     _apply_tick_formatting(axis, config)
     fixed_x_limits = axis.get_xlim()
     fixed_y_limits = axis.get_ylim()
@@ -141,6 +142,7 @@ def render_overlay_plot(
     axis.set_xscale("log" if overlay_plot.x_scale == AxisScale.LOG else "linear")
     if not overlay_plot.x_auto_range and overlay_plot.x_min is not None and overlay_plot.x_max is not None:
         axis.set_xlim(overlay_plot.x_min, overlay_plot.x_max)
+    _stabilize_overlay_log_axis(axis, overlay_plot, series_frames)
     _apply_scalar_formatter(axis.xaxis, axis.get_xlim())
     _apply_scalar_formatter(axis.yaxis, axis.get_ylim())
     fixed_x_limits = axis.get_xlim()
@@ -229,6 +231,8 @@ def _draw_density_plot(axis, x_values: np.ndarray, y_values: np.ndarray, config:
         bins="log",
         mincnt=config.density_min_count,
         cmap=_resolve_density_cmap(config.density_color_map),
+        xscale="log" if config.x_scale == AxisScale.LOG else "linear",
+        yscale="log" if config.y_scale == AxisScale.LOG else "linear",
         linewidths=0,
     )
 
@@ -271,6 +275,54 @@ def _apply_ranges(axis, config: PlotConfig) -> None:
         axis.set_ylim(config.y_min, config.y_max)
 
 
+def _stabilize_log_axes(
+    axis,
+    config: PlotConfig,
+    x_values: np.ndarray,
+    y_values: np.ndarray | None,
+) -> None:
+    if config.x_scale == AxisScale.LOG:
+        lower, upper = _positive_limits(x_values)
+        if lower is not None and upper is not None:
+            current_lower, current_upper = axis.get_xlim()
+            if current_lower <= 0 or not np.isfinite(current_lower) or not np.isfinite(current_upper):
+                axis.set_xlim(lower, upper)
+            elif current_upper <= current_lower:
+                axis.set_xlim(lower, upper)
+
+    if config.plot_type != PlotType.HISTOGRAM and config.y_scale == AxisScale.LOG and y_values is not None:
+        lower, upper = _positive_limits(y_values)
+        if lower is not None and upper is not None:
+            current_lower, current_upper = axis.get_ylim()
+            if current_lower <= 0 or not np.isfinite(current_lower) or not np.isfinite(current_upper):
+                axis.set_ylim(lower, upper)
+            elif current_upper <= current_lower:
+                axis.set_ylim(lower, upper)
+
+
+def _stabilize_overlay_log_axis(
+    axis,
+    overlay_plot: OverlayPlot,
+    series_frames: list[tuple[OverlaySeries, np.ndarray]],
+) -> None:
+    if overlay_plot.x_scale != AxisScale.LOG:
+        return
+
+    valid_arrays = [np.asarray(values, dtype=float) for _, values in series_frames if len(values)]
+    if not valid_arrays:
+        return
+
+    lower, upper = _positive_limits(np.concatenate(valid_arrays))
+    if lower is None or upper is None:
+        return
+
+    current_lower, current_upper = axis.get_xlim()
+    if current_lower <= 0 or not np.isfinite(current_lower) or not np.isfinite(current_upper):
+        axis.set_xlim(lower, upper)
+    elif current_upper <= current_lower:
+        axis.set_xlim(lower, upper)
+
+
 def _limit_points(
     x_values: np.ndarray,
     y_values: np.ndarray,
@@ -280,6 +332,16 @@ def _limit_points(
         return x_values, y_values
     indices = np.linspace(0, x_values.size - 1, max_points, dtype=int)
     return x_values[indices], y_values[indices]
+
+
+def _positive_limits(values: np.ndarray) -> tuple[float | None, float | None]:
+    valid = values[np.isfinite(values) & (values > 0)]
+    if valid.size == 0:
+        return None, None
+
+    lower = max(float(np.nanmin(valid)), 1e-6)
+    upper = max(float(np.nanmax(valid)), lower * 1.01)
+    return lower, upper
 
 
 def _effective_font_size(requested_size: int) -> int:

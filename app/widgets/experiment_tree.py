@@ -27,14 +27,35 @@ class ExperimentTree(QTreeWidget):
             experiment_item.setExpanded(True)
             self.addTopLevelItem(experiment_item)
 
+            group_nodes: dict[tuple[str, ...], QTreeWidgetItem] = {}
             for sample in experiment.samples:
+                parent_item = experiment_item
+                tree_path = sample.metadata.get("tree_path", [])
+                normalized_tree_path = [str(part) for part in tree_path if str(part).strip()]
+                current_path: list[str] = []
+                for group_name in normalized_tree_path:
+                    current_path.append(group_name)
+                    path_key = tuple(current_path)
+                    group_item = group_nodes.get(path_key)
+                    if group_item is None:
+                        group_item = QTreeWidgetItem([group_name])
+                        group_item.setData(
+                            0,
+                            Qt.ItemDataRole.UserRole,
+                            ("group", experiment.id, tuple(current_path)),
+                        )
+                        parent_item.addChild(group_item)
+                        group_item.setExpanded(True)
+                        group_nodes[path_key] = group_item
+                    parent_item = group_item
+
                 sample_item = QTreeWidgetItem([sample.name])
                 sample_item.setData(
                     0,
                     Qt.ItemDataRole.UserRole,
                     ("sample", experiment.id, sample.id),
                 )
-                experiment_item.addChild(sample_item)
+                parent_item.addChild(sample_item)
 
     def _emit_selection(self) -> None:
         item = self.currentItem()
